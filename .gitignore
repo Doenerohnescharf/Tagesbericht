@@ -1,0 +1,7 @@
+TestData/
+out.sqlite
+output_mandant.xlsx
+Tagesbericht.xlsx
+test.py
+XLSXWriter.py
+sqlitetoxlsx.py
