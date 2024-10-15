@@ -6,33 +6,45 @@ and avoids inserting duplicate entries.
 """
 
 import sys
-import argparse
 import sqlite3
 import traceback
 import os
 import logging
+import configparser
 from dbfread import DBF
 from datetime import date, datetime
 
-# Dictionary of directories, each assigned a name A-F
-# archiv
-# directories = {
-#     'A': 'TestData/Archiv/MandantA',
-#     'B': 'TestData/Archiv/MandantB',
-#     'C': 'TestData/Archiv/MandantC',
-#     'D': 'TestData/Archiv/MandantD',
-#     'E': 'TestData/Archiv/MandantE',
-#     'F': 'TestData/Archiv/MandantF'
-# }
+def setup_logging(config):
+    log_level_str = config['Logging'].get('level', 'INFO').upper()
+    log_level = getattr(logging, log_level_str, logging.WARNING)
+    log_targets = [target.strip().lower() for target in config['Logging'].get('targets', 'console').split(',')]
+    log_file_path = config['Logging'].get('file_path', 'dbf2sqlite.log')
 
-directories = {
-    'A': 'TestData/MandantA',
-    'B': 'TestData/MandantB',
-    'C': 'TestData/MandantC',
-    'D': 'TestData/MandantD',
-    'E': 'TestData/MandantE',
-    'F': 'TestData/MandantF'
-}
+    # Clear existing handlers (if any)
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    handlers = []
+    if 'console' in log_targets:
+        handlers.append(logging.StreamHandler(sys.stdout))  # Ensure output to stdout
+    if 'file' in log_targets:
+        handlers.append(logging.FileHandler(log_file_path))
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
+
+def load_config(config_path='dbfToSqlite.ini'):
+    config = configparser.ConfigParser()
+    try:
+        config.read(config_path)
+        logging.info(f"Configuration loaded from {config_path}")
+        return config
+    except configparser.Error as e:
+        logging.error(f"Error reading configuration file: {e}")
+        sys.exit(1)
 
 # Mapping of DBF field types to SQLite types
 typemap = {
@@ -46,13 +58,6 @@ typemap = {
     'T': 'DATETIME',
     '0': 'INTEGER',
 }
-
-# Set up logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]  # Print logs to the console
-)
 
 def adapt_date(value):
     """Adapt date objects to string format for SQLite."""
@@ -126,37 +131,21 @@ def insert_records(cursor, table, mandant):
 
     logging.info(f'Completed processing {total_records} records for mandant {mandant}. Total inserted: {inserted_count}')
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='Convert DBF files from multiple directories into an SQLite database with an additional "mandant" column and duplicate entry avoidance.')
-    arg = parser.add_argument
-
-    arg('-o', '--output-file',
-        action='store',
-        dest='output_file',
-        default=None,
-        help='SQLite database to write to (default is to print schema to stdout)')
-
-    arg('-e', '--encoding',
-        action='store',
-        dest='encoding',
-        default=None,
-        help='Character encoding in DBF file')
-
-    arg('--char-decode-errors',
-        action='store',
-        dest='char_decode_errors',
-        default='strict',
-        help='How to handle decode errors (see pydoc bytes.decode)')
-
-    return parser.parse_args()
-
 def main():
-    args = parse_args()
+    config = load_config()
+    setup_logging(config)
+
+    logging.info("Starting DBF to SQLite conversion process")
+
+    directories = dict(config['Directories'])
+    settings = config['Settings']
+    output_file = settings.get('output_file') or None
+    encoding = settings.get('encoding') or None
+    char_decode_errors = settings.get('char_decode_errors') or 'strict'
+
 
     # Connect to the SQLite database, or create it in memory if no output file is specified
-    conn = sqlite3.connect(args.output_file or ':memory:')
+    conn = sqlite3.connect(output_file or ':memory:')
     cursor = conn.cursor()
 
     # Process each directory and corresponding DBF file
@@ -164,16 +153,17 @@ def main():
         dbf_file_path = os.path.join(directory, 'el_pwz.dbf')
 
         if not os.path.exists(dbf_file_path):
-            print(f"Warning: DBF file '{dbf_file_path}' not found in directory '{directory}'. Skipping.")
+            logging.warning(f"DBF file '{dbf_file_path}' not found in directory '{directory}'. Skipping.")
             continue
 
         try:
+            logging.info(f"Processing DBF file: {dbf_file_path}")
             # Read the DBF file
             dbf_table = DBF(dbf_file_path,
                             load=True,
                             lowernames=True,
-                            encoding=args.encoding,
-                            char_decode_errors=args.char_decode_errors)
+                            encoding=encoding,
+                            char_decode_errors=char_decode_errors)
 
             # Create the SQLite table if it doesn't exist
             create_table_if_not_exists(cursor, dbf_table)
@@ -182,19 +172,23 @@ def main():
             insert_records(cursor, dbf_table, mandant)
 
         except UnicodeDecodeError:
+            logging.error(f"UnicodeDecodeError encountered while processing {dbf_file_path}")
             traceback.print_exc()
-            sys.exit('Please use --encoding or --char-decode-errors.')
+            sys.exit('Please use encoding or char-decode-errors.')
 
     # Commit the changes to the database
     conn.commit()
 
     # If no output file is specified, dump the SQL schema and data to stdout
-    if not args.output_file:
+    if not output_file:
         for line in conn.iterdump():
             print(line)
+    else:
+        logging.info(f"Data successfully written to {output_file}")
 
     # Close the database connection
     conn.close()
+    logging.info("DBF to SQLite conversion process completed")
 
 if __name__ == '__main__':
     main()
