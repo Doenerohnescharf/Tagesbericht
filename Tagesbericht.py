@@ -8,6 +8,7 @@ import openpyxl
 from openpyxl.styles import PatternFill
 from datetime import datetime
 import sys
+import os
 
 def setup_logging(config):
     log_level_str = config['Logging'].get('level', 'INFO').upper()
@@ -40,6 +41,12 @@ def load_config(config_path='Tagesbericht.ini'):
     except configparser.Error as e:
         logging.error(f"Error reading configuration file: {e}")
         sys.exit(1)
+
+def check_database_exists(db_path):
+    if not os.path.exists(db_path):
+        logging.error(f"Database file not found: {db_path}")
+        return False
+    return True
 
 def format_date(date_string):
     if pd.isna(date_string) or date_string == '':
@@ -146,6 +153,9 @@ def main():
     date_from = settings.get('date_from')
     date_to = settings.get('date_to')
     date = settings.get('date')
+
+    if not check_database_exists(database):
+        sys.exit(1)
 
     mandants = dict(config['Mandants'])
     column_names = dict(config['Column_Names'])
