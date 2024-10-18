@@ -60,11 +60,9 @@ typemap = {
 }
 
 def adapt_date(value):
-    """Adapt date objects to string format for SQLite."""
     return value.isoformat()
 
 def adapt_datetime(value):
-    """Adapt datetime objects to string format for SQLite."""
     return value.isoformat()
 
 # Register adapters for date and datetime types
@@ -72,8 +70,6 @@ sqlite3.register_adapter(date, adapt_date)
 sqlite3.register_adapter(datetime, adapt_datetime)
 
 def create_table_if_not_exists(cursor, table):
-    """Create a SQLite table if it does not already exist, with an 'id' primary key and additional 'mandant' column."""
-
     # Map DBF field types to SQLite field types
     field_types = {field.name: typemap.get(field.type, 'TEXT') for field in table.fields}
 
@@ -87,14 +83,11 @@ def create_table_if_not_exists(cursor, table):
     cursor.execute(sql)
 
 def load_existing_records(cursor, table_name, mandant):
-    """Load existing records for a specific mandant from the SQLite table."""
     query = f'SELECT wz__pat, wz__dat, wz_time FROM "{table_name}" WHERE mandant = ?'
     cursor.execute(query, (mandant,))
     return {(str(row[0]), str(row[1]), str(row[2])) for row in cursor.fetchall()}
 
 def insert_records(cursor, table, mandant):
-    """Insert records from the DBF table into the SQLite database with an additional 'mandant' column."""
-
     # Load all existing records for the current mandant into a set
     existing_records = load_existing_records(cursor, table.name, mandant)
 

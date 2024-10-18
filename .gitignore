@@ -3,7 +3,6 @@ TestData/
 *.xlsx
 *.log
 .~lock.*
-test.py
 XLSXWriter.py
 sqlitetoxlsx.py
 

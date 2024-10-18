@@ -48,6 +48,27 @@ def check_database_exists(db_path):
         return False
     return True
 
+def generate_output_filename(config, date=None, date_from=None, date_to=None):
+    settings = config['Settings']
+    output_path = settings.get('output_path', '.')
+    prefix = settings.get('output_prefix', 'Tagesbericht')
+    
+    # Generate the date portion of the filename
+    if date:
+        date_suffix = f"_{date}"
+    elif date_from and date_to:
+        date_suffix = f"_{date_from}_to_{date_to}"
+    else:
+        date_suffix = ""
+    
+    filename = f"{prefix}{date_suffix}.xlsx"
+    full_path = os.path.join(output_path, filename)
+    
+    # Ensure output directory exists
+    os.makedirs(output_path, exist_ok=True)
+    
+    return full_path, filename
+
 def format_date(date_string):
     if pd.isna(date_string) or date_string == '':
         return ''
@@ -72,16 +93,22 @@ def get_latest_date(db_path):
 def get_data_from_sqlite(db_path, mandant, columns, date_from=None, date_to=None):
     try:
         with sqlite3.connect(db_path) as conn:
+            # Start with base query and parameters
             query = f"SELECT {', '.join(columns)} FROM el_pwz WHERE mandant = ?"
             params = [mandant]
 
-            if date_from:
+            # Add date filters if specified
+            if date_from and date_to:
+                query += " AND wz__dat   ? AND ?"
+                params.extend([date_from, date_to])
+            elif date_from:
                 query += " AND wz__dat >= ?"
                 params.append(date_from)
-            if date_to:
+            elif date_to:
                 query += " AND wz__dat <= ?"
                 params.append(date_to)
 
+            logging.info(f"Executing query: {query} with params: {params}")
             df = pd.read_sql_query(query, conn, params=params)
             logging.info(f"Retrieved {len(df)} rows for mandant {mandant}")
             return df
@@ -91,6 +118,7 @@ def get_data_from_sqlite(db_path, mandant, columns, date_from=None, date_to=None
 
 def create_excel_sheet(workbook, sheet_name, df, column_names):
     sheet = workbook.create_sheet(title=sheet_name)
+    sheet.freeze_panes = "A2"  # Freezes the top row
     
     fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
 
@@ -116,25 +144,30 @@ def create_excel_sheet(workbook, sheet_name, df, column_names):
                 sheet.column_dimensions[column_letter].width = value_length
 
 def sqlite_to_xlsx(db_path, xlsx_path, columns, mandants, column_names, date=None, date_from=None, date_to=None):
-    workbook = openpyxl.Workbook()
-    workbook.remove(workbook.active)  # Remove the default sheet
-
-    for mandant, name in mandants.items():
-        df = get_data_from_sqlite(db_path, mandant, columns, date_from, date_to)
-        
-        if not df.empty:
-            # If a specific date is provided, filter the dataframe
-            if date:
-                df = df[df['wz__dat'] == date]
-            
-            # Format date columns
-            for col in ['wz__dat', 'wz__geb']:
-                if col in df.columns:
-                    df[col] = df[col].apply(format_date)
-
-            create_excel_sheet(workbook, name, df, column_names)
-
     try:
+        # Create the output directory if it doesn't exist
+        output_dir = os.path.dirname(xlsx_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            
+        workbook = openpyxl.Workbook()
+        workbook.remove(workbook.active)  # Remove the default sheet
+
+        for mandant, name in mandants.items():
+            # If a specific date is provided, use it for both date_from and date_to
+            if date:
+                df = get_data_from_sqlite(db_path, mandant, columns, date_from=date, date_to=date)
+            else:
+                df = get_data_from_sqlite(db_path, mandant, columns, date_from=date_from, date_to=date_to)
+            
+            if not df.empty:
+                # Format date columns
+                for col in ['wz__dat', 'wz__geb']:
+                    if col in df.columns:
+                        df[col] = df[col].apply(format_date)
+
+                create_excel_sheet(workbook, name, df, column_names)
+
         workbook.save(xlsx_path)
         logging.info(f"Excel file created successfully at {xlsx_path}")
     except PermissionError:
@@ -147,7 +180,6 @@ def main():
     setup_logging(config)
 
     settings = config['Settings']
-    output_file = settings.get('output_file', 'Tagesbericht.xlsx')
     columns = settings.get('columns', '').split(',')
     database = settings.get('database', 'out.sqlite')
     date_from = settings.get('date_from')
@@ -165,14 +197,16 @@ def main():
         latest_date = get_latest_date(database)
         if latest_date:
             date = latest_date
-            output_file = f'Tagesbericht_{date}.xlsx'
             logging.info(f"Using latest date from database: {date}")
         else:
             logging.error("No date specified and couldn't retrieve latest date from database.")
             sys.exit(1)
 
+    # Generate output filename based on configuration and dates
+    output_file, filename = generate_output_filename(config, date, date_from, date_to)
+    logging.info(f"Output will be saved to: {output_file}")
+
     if date:
-        output_file = f'Tagesbericht_{date}.xlsx'
         sqlite_to_xlsx(database, output_file, columns, mandants, column_names, date=date)
     else:
         sqlite_to_xlsx(database, output_file, columns, mandants, column_names, date_from=date_from, date_to=date_to)
