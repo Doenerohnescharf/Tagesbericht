@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import configparser
+import argparse
 import sqlite3
 import pandas as pd
 import openpyxl
@@ -41,6 +42,13 @@ def load_config(config_path='Tagesbericht.ini'):
     except configparser.Error as e:
         logging.error(f"Error reading configuration file: {e}")
         sys.exit(1)
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Generate Tagesberichte from SQLite database.')
+    parser.add_argument('--date', help='Specific date to generate the report for.')
+    parser.add_argument('--date-from', help='Start date for date range filter.')
+    parser.add_argument('--date-to', help='End date for date range filter.')
+    return parser.parse_args()
 
 def check_database_exists(db_path):
     if not os.path.exists(db_path):
@@ -99,7 +107,7 @@ def get_data_from_sqlite(db_path, mandant, columns, date_from=None, date_to=None
 
             # Add date filters if specified
             if date_from and date_to:
-                query += " AND wz__dat   ? AND ?"
+                query += " AND wz__dat BETWEEN ? AND ?"
                 params.extend([date_from, date_to])
             elif date_from:
                 query += " AND wz__dat >= ?"
@@ -176,6 +184,7 @@ def sqlite_to_xlsx(db_path, xlsx_path, columns, mandants, column_names, date=Non
         logging.error(f"Error saving Excel file: {e}")
 
 def main():
+    args = parse_args()
     config = load_config()
     setup_logging(config)
 
@@ -191,6 +200,14 @@ def main():
 
     mandants = dict(config['Mandants'])
     column_names = dict(config['Column_Names'])
+
+    # Override config settings with command-line args
+    if args.date:
+        date = args.date
+    if args.date_from:
+        date_from = args.date_from
+    if args.date_to:
+        date_to = args.date_to    
 
     if not date and not date_from and not date_to:
         # If no date is specified, use the latest date from the database
